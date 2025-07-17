@@ -38,8 +38,6 @@ func genMethod(g *protogen.GeneratedFile, method *protogen.Method) {
 
 func genMethodReqPart(g *protogen.GeneratedFile, method *protogen.Method) {
 	g.P("var req ", method.Input.GoIdent)
-	g.P("var multipartDone bool")
-	g.P()
 
 	var bytesField *protogen.Field
 	for _, f := range method.Input.Fields {
@@ -48,6 +46,15 @@ func genMethodReqPart(g *protogen.GeneratedFile, method *protogen.Method) {
 			break
 		}
 	}
+
+	hasExported := slices.ContainsFunc(method.Input.Fields, func(f *protogen.Field) bool {
+		return unicode.IsUpper(rune(f.GoName[0]))
+	})
+
+	if bytesField != nil || hasExported {
+		g.P("var multipartDone bool")
+	}
+	g.P()
 
 	if bytesField != nil {
 		fieldName := bytesField.GoName
@@ -78,10 +85,6 @@ func genMethodReqPart(g *protogen.GeneratedFile, method *protogen.Method) {
 		g.P(`}`)
 		g.P()
 	}
-
-	hasExported := slices.ContainsFunc(method.Input.Fields, func(f *protogen.Field) bool {
-		return unicode.IsUpper(rune(f.GoName[0]))
-	})
 
 	if hasExported {
 		g.P("if !multipartDone {")
