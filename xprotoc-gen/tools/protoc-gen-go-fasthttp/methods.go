@@ -38,32 +38,71 @@ func genMethod(g *protogen.GeneratedFile, method *protogen.Method) {
 
 func genMethodReqPart(g *protogen.GeneratedFile, method *protogen.Method) {
 	g.P("var req ", method.Input.GoIdent)
+	g.P("var multipartDone bool")
 	g.P()
 
-	hasExportedField := slices.ContainsFunc(method.Input.Fields, func(f *protogen.Field) bool {
+	var bytesField *protogen.Field
+	for _, f := range method.Input.Fields {
+		if f.Desc.Kind() == protoreflect.BytesKind {
+			bytesField = f
+			break
+		}
+	}
+
+	if bytesField != nil {
+		fieldName := bytesField.GoName
+		jsonName := bytesField.Desc.JSONName()
+
+		_ = g.QualifiedGoIdent(protogen.GoIdent{GoImportPath: "bytes"})
+		_ = g.QualifiedGoIdent(protogen.GoIdent{GoImportPath: "mime"})
+		_ = g.QualifiedGoIdent(protogen.GoIdent{GoImportPath: "mime/multipart"})
+		_ = g.QualifiedGoIdent(protogen.GoIdent{GoImportPath: "io"})
+		_ = g.QualifiedGoIdent(protogen.GoIdent{GoImportPath: "strings"})
+
+		g.P(`ct := string(c.Request.Header.ContentType())`)
+		g.P(`if strings.HasPrefix(ct, "multipart/form-data") {`)
+		g.P(`  if _, params, err := mime.ParseMediaType(ct); err == nil {`)
+		g.P(`    if boundary, ok := params["boundary"]; ok {`)
+		g.P(`      mr := multipart.NewReader(bytes.NewReader(c.PostBody()), boundary)`)
+		g.P(`      for {`)
+		g.P(`        part, err := mr.NextPart(); if err == io.EOF { break }; if err != nil { break }`)
+		g.P(`        name := part.FormName()`)
+		g.P(`        if name == "body" || name == "file" || name == "` + jsonName + `" {`)
+		g.P(fmt.Sprintf(`          req.%s, err = io.ReadAll(part)`, fieldName))
+		g.P(`          if err == nil { multipartDone = true }`)
+		g.P(`          break`)
+		g.P(`        }`)
+		g.P(`      }`)
+		g.P(`    }`)
+		g.P(`  }`)
+		g.P(`}`)
+		g.P()
+	}
+
+	hasExported := slices.ContainsFunc(method.Input.Fields, func(f *protogen.Field) bool {
 		return unicode.IsUpper(rune(f.GoName[0]))
 	})
 
-	// use marshaller if we need
-	if hasExportedField {
-		g.P("if err := ", jsonUnmarshalImport.Ident("Unmarshal"), "(c.PostBody(), &req); err != nil {")
-		g.P("	", errorHandlersImport.Ident(*flagUnmarshalErrorHandleFunc), "(c, err)")
-		g.P("	return")
+	if hasExported {
+		g.P("if !multipartDone {")
+		g.P("  if err := ", jsonUnmarshalImport.Ident("Unmarshal"), "(c.PostBody(), &req); err != nil {")
+		g.P("    ", errorHandlersImport.Ident(*flagUnmarshalErrorHandleFunc), "(c, err)")
+		g.P("    return")
+		g.P("  }")
 		g.P("}")
 		g.P()
 
 		hasValidation := false
-		for _, field := range method.Input.Fields {
-			if proto.HasExtension(field.Desc.Options(), validate.E_Rules) {
+		for _, f := range method.Input.Fields {
+			if proto.HasExtension(f.Desc.Options(), validate.E_Rules) {
 				hasValidation = true
 				break
 			}
 		}
-
 		if hasValidation {
 			g.P("if err := req.Validate(); err != nil {")
-			g.P("	", errorHandlersImport.Ident(*flagValidationErrorHandleFunc), "(c, err)")
-			g.P("	return")
+			g.P("  ", errorHandlersImport.Ident(*flagValidationErrorHandleFunc), "(c, err)")
+			g.P("  return")
 			g.P("}")
 			g.P()
 		}
