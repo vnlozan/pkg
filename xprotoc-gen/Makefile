@@ -65,17 +65,18 @@ install_tools:
 
 proto_gen:
 	protoc -I $(INPUT_PROTO) -I lib \
-             --go_out=$(GO_OUT) --go_opt=paths=source_relative \
-             --go-grpc_out=$(GO_OUT) --go-grpc_opt=paths=source_relative \
-             --grpc-gateway_out=$(GO_OUT) --grpc-gateway_opt=paths=source_relative \
-             --openapiv2_out=$(GO_OUT) \
-             $(foreach opt,$(OPENAPI_V2_OPT),--openapiv2_opt=$(opt)) \
-             --validate_out=$(GO_OUT) --validate_opt=paths=source_relative,lang=go \
-             --go-fiber_out=$(GO_OUT) \
-             $(foreach opt,$(PROTOC_GEN_GO_FIBER_OPTS),--go-fiber_opt=$(opt)) \
-			 --go-fasthttp_out=$(GO_OUT) \
-			 $(foreach opt,$(PROTOC_GEN_GO_FASTHTTP_OPTS),--go-fasthttp_opt=$(opt)) \
-             $(PROTO_FILES)
+		--go_out=$(GO_OUT) --go_opt=paths=source_relative \
+		--go-grpc_out=$(GO_OUT) --go-grpc_opt=paths=source_relative \
+		--grpc-gateway_out=$(GO_OUT) --grpc-gateway_opt=paths=source_relative \
+		--openapiv2_out=$(GO_OUT) \
+		$(foreach opt,$(OPENAPI_V2_OPT),--openapiv2_opt=$(opt)) \
+		--validate_out=$(GO_OUT) --validate_opt=paths=source_relative,lang=go \
+		--go-fiber_out=$(GO_OUT) \
+		$(foreach opt,$(PROTOC_GEN_GO_FIBER_OPTS),--go-fiber_opt=$(opt)) \
+		--go-fasthttp_out=$(GO_OUT) \
+		$(foreach opt,$(PROTOC_GEN_GO_FASTHTTP_OPTS),--go-fasthttp_opt=$(opt)) \
+		$(PROTO_FILES)
+	@patch-swagger $(GO_OUT)
 .PHONY: proto_gen
 
 proto_download:

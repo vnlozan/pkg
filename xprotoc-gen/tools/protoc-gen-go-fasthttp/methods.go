@@ -9,6 +9,7 @@ import (
 	"google.golang.org/genproto/googleapis/api/annotations"
 	"google.golang.org/protobuf/compiler/protogen"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
@@ -37,32 +38,76 @@ func genMethod(g *protogen.GeneratedFile, method *protogen.Method) {
 
 func genMethodReqPart(g *protogen.GeneratedFile, method *protogen.Method) {
 	g.P("var req ", method.Input.GoIdent)
-	g.P()
 
-	hasExportedField := slices.ContainsFunc(method.Input.Fields, func(f *protogen.Field) bool {
+	var bytesField *protogen.Field
+	for _, f := range method.Input.Fields {
+		if f.Desc.Kind() == protoreflect.BytesKind {
+			bytesField = f
+			break
+		}
+	}
+
+	hasExported := slices.ContainsFunc(method.Input.Fields, func(f *protogen.Field) bool {
 		return unicode.IsUpper(rune(f.GoName[0]))
 	})
 
-	// use marshaller if we need
-	if hasExportedField {
-		g.P("if err := ", jsonUnmarshalImport.Ident("Unmarshal"), "(c.PostBody(), &req); err != nil {")
-		g.P("	", errorHandlersImport.Ident(*flagUnmarshalErrorHandleFunc), "(c, err)")
-		g.P("	return")
+	if bytesField != nil || hasExported {
+		g.P("var multipartDone bool")
+	}
+	g.P()
+
+	if bytesField != nil {
+		fieldName := bytesField.GoName
+		jsonName := bytesField.Desc.JSONName()
+
+		_ = g.QualifiedGoIdent(protogen.GoIdent{GoImportPath: "bytes"})
+		_ = g.QualifiedGoIdent(protogen.GoIdent{GoImportPath: "mime"})
+		_ = g.QualifiedGoIdent(protogen.GoIdent{GoImportPath: "mime/multipart"})
+		_ = g.QualifiedGoIdent(protogen.GoIdent{GoImportPath: "io"})
+		_ = g.QualifiedGoIdent(protogen.GoIdent{GoImportPath: "strings"})
+
+		g.P(`ct := string(c.Request.Header.ContentType())`)
+		g.P(`if strings.HasPrefix(ct, "multipart/form-data") {`)
+		g.P(`  if _, params, err := mime.ParseMediaType(ct); err == nil {`)
+		g.P(`    if boundary, ok := params["boundary"]; ok {`)
+		g.P(`      mr := multipart.NewReader(bytes.NewReader(c.PostBody()), boundary)`)
+		g.P(`      for {`)
+		g.P(`        part, err := mr.NextPart(); if err == io.EOF { break }; if err != nil { break }`)
+		g.P(`        name := part.FormName()`)
+		g.P(`        if name == "body" || name == "file" || name == "` + jsonName + `" {`)
+		g.P(fmt.Sprintf(`          req.%s, err = io.ReadAll(part)`, fieldName))
+		g.P(`          if err == nil { multipartDone = true }`)
+		g.P(`          break`)
+		g.P(`        }`)
+		g.P(`      }`)
+		g.P(`    }`)
+		g.P(`  }`)
+		g.P(`}`)
+		g.P()
+	}
+
+	if hasExported {
+		g.P("if !multipartDone {")
+		g.P("  if err := ", jsonUnmarshalImport.Ident("Unmarshal"), "(c.PostBody(), &req); err != nil {")
+		g.P("    ", errorHandlersImport.Ident(*flagUnmarshalErrorHandleFunc), "(c, err)")
+		g.P("    return")
+		g.P("  }")
 		g.P("}")
 		g.P()
 
 		hasValidation := false
-		for _, field := range method.Input.Fields {
-			if proto.HasExtension(field.Desc.Options(), validate.E_Rules) {
+		for _, f := range method.Input.Fields {
+			if proto.HasExtension(f.Desc.Options(), validate.E_Rules) {
 				hasValidation = true
 				break
 			}
 		}
 
+        
 		if hasValidation {
 			g.P("if err := req.Validate(); err != nil {")
-			g.P("	", errorHandlersImport.Ident(*flagValidationErrorHandleFunc), "(c, err)")
-			g.P("	return")
+			g.P("  ", errorHandlersImport.Ident(*flagValidationErrorHandleFunc), "(c, err)")
+			g.P("  return")
 			g.P("}")
 			g.P()
 		}
@@ -94,6 +139,44 @@ func genMethodExecPart(g *protogen.GeneratedFile, method *protogen.Method) {
 	g.P("}")
 	g.P()
 
+	if method.Output.Desc.FullName() == protoreflect.FullName("google.api.HttpBody") {
+		httpBodyImport := g.QualifiedGoIdent(
+			protogen.GoIdent{
+				GoImportPath: "google.golang.org/genproto/googleapis/api/httpbody",
+				GoName:       "HttpBody",
+			},
+		)
+
+		structpbImport := g.QualifiedGoIdent(
+			protogen.GoIdent{
+				GoImportPath: "google.golang.org/protobuf/types/known/structpb",
+				GoName:       "Struct",
+			},
+		)
+
+		g.P("if hb, ok := resp.(*", httpBodyImport, "); ok {")
+		g.P("if ct := hb.GetContentType(); ct != \"\" { c.SetContentType(ct) }")
+
+		g.P("for _, ext := range hb.GetExtensions() {")
+		g.P("    var s ", structpbImport)
+		g.P("    if err := ext.UnmarshalTo(&s); err == nil {")
+		g.P("        for k, v := range s.Fields {")
+		g.P("            if v.GetKind() != nil {")
+		g.P("                c.Response.Header.Set(k, v.GetStringValue())")
+		g.P("            }")
+		g.P("        }")
+		g.P("    }")
+		g.P("}")
+		g.P()
+
+		g.P("c.SetStatusCode(", fasthttpImport.Ident("StatusOK"), ")")
+		g.P("c.Write(hb.GetData())")
+
+		g.P("return")
+		g.P("}")
+
+		return
+	}
 	g.P("data, mErr := ", jsonUnmarshalImport.Ident("Marshal"), "(resp)")
 	g.P("if mErr != nil {")
 	g.P(errorHandlersImport.Ident(*flagGrpcErrorHandleFunc), "(c, mErr)")
