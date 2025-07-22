@@ -102,6 +102,8 @@ func genMethodReqPart(g *protogen.GeneratedFile, method *protogen.Method) {
 				break
 			}
 		}
+
+        
 		if hasValidation {
 			g.P("if err := req.Validate(); err != nil {")
 			g.P("  ", errorHandlersImport.Ident(*flagValidationErrorHandleFunc), "(c, err)")
@@ -175,7 +177,6 @@ func genMethodExecPart(g *protogen.GeneratedFile, method *protogen.Method) {
 
 		return
 	}
-
 	g.P("data, mErr := ", jsonUnmarshalImport.Ident("Marshal"), "(resp)")
 	g.P("if mErr != nil {")
 	g.P(errorHandlersImport.Ident(*flagGrpcErrorHandleFunc), "(c, mErr)")
